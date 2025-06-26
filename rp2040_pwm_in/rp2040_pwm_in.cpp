@@ -30,7 +30,6 @@ void Rp2040PwmInSensor::setup() {
   assert(pwm_gpio_to_channel(gpio) == PWM_CHAN_B);
 
   pwm_config cfg = pwm_get_default_config();
-  pwm_config_set_clkdiv_int(&cfg, 1);
   pwm_config_set_clkdiv_mode(&cfg, PWM_DIV_B_RISING);
   if (slices_in_use == 0) {
     irq_add_shared_handler(PWM_IRQ_WRAP, wraparound_intr, PICO_SHARED_IRQ_HANDLER_DEFAULT_ORDER_PRIORITY);
@@ -52,21 +51,42 @@ void Rp2040PwmInSensor::dump_config() {
 }
 
 void Rp2040PwmInSensor::update() {
-  int now_micros = micros();
   int slice = pwm_gpio_to_slice_num(this->pin_->get_pin());
 
-  // XXX: possibility of torn read.
-  // XXX: incorrect wraparounds wraparound.
-  uint64_t pulses =
-      (static_cast<uint64_t>(wraparounds[slice]) << 16) |
-      pwm_get_counter(slice);
-  int delta_micros = now_micros - this->last_read_micros_;
-  uint64_t pulses_delta = pulses - this->last_pulses_;
+  // Let's try to minimize skew between read of `now_micros`, `hi`, and `lo`.
+  uint32_t now_micros = micros();
+  uint32_t hi = wraparounds[slice];
+  uint16_t lo = pwm_get_counter(slice);
+  uint32_t delta_micros = now_micros - this->last_read_micros_;
+
+  if (lo < this->last_lo_ && hi == this->last_hi_) {
+      // `lo` appears to have wrapped around but `wraparound_intr` has not run yet.
+      if (pwm_get_irq_status_mask() & (1 << slice)) {
+          hi++;
+          ESP_LOGW(TAG, "saw queued wraparound, surprising! now=%u then=%u hi=%u lo=%u last_lo_=%u", now_micros, this->last_read_micros_, hi, lo, this->last_lo_);
+      } else {
+          int new_hi = wraparounds[slice];
+          if (new_hi == hi) {
+              ESP_LOGW(TAG, "repeat hi! now=%u then=%u hi=%u lo=%u last_lo_=%u", now_micros, this->last_read_micros_, hi, lo, this->last_lo_);
+              hi++;
+          } else {
+              // This is the unsurprising case.
+              ESP_LOGD(TAG, "wraparound irq lagged behind, now=%u then=%u hi=%u lo=%u last_lo_=%u", now_micros, this->last_read_micros_, hi, lo, this->last_lo_);
+              hi = new_hi;
+          }
+      }
+  }
+
+  // The intermediate assignment of `lo_delta` isn't just for readability; it avoids incorrect wraparound due to C++'s automatic promotion of `uint16_t` to `uint32_t`.
+  uint32_t hi_delta = hi - this->last_hi_;
+  uint16_t lo_delta = lo - this->last_lo_;
+
   this->publish_state(
-    static_cast<float>(pulses_delta) /
+    static_cast<float>((static_cast<uint64_t>(hi_delta) << 16) | static_cast<uint64_t>(lo_delta)) /
     (static_cast<float>(delta_micros) / 60000000.)
   );
-  this->last_pulses_ = pulses;
+  this->last_hi_ = hi;
+  this->last_lo_ = lo;
   this->last_read_micros_ = now_micros;
 }
 

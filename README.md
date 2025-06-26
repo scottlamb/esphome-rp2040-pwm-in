@@ -5,9 +5,7 @@ Limitations:
 *   This will go badly if you try to use the same PWM slice twice, either via this component alone or
     via this and the `rp2040_pwm` (output) component. Maybe a PWM slice should be represented by some shared class?
     Or at least it should check if the PWM slice is already enabled?
-*   It will have a discontinuity every 2^48 cycles because it subtracts `int64_t` values representing modular 48-bit values.
-*   It can have a "torn read" problem between the PWM wraparounds (high 32 bits of the 48-bit values) and the low 16 bits.
-    The interrupt handler doesn't run atomically with the PWM wraparound and there's no attempt yet to handle this.
+*   The values can be off by a few cycles due to mismatch between timer read and PWM read.
 *   It could in theory miss 65,536 values at a time if the interrupt handler doesn't run before the next interrupt fires.
     This doesn't seem likely but could be avoided with strategies as in some of the components below.
 *   Inflexible. It could support rising vs trailing edge vs duty cycle measurement, dividers, total, etc.

@@ -19,7 +19,8 @@ class Rp2040PwmInSensor : public sensor::Sensor, public PollingComponent {
 
  private:
   uint32_t last_read_micros_ = 0;
-  uint64_t last_pulses_ = 0;
+  uint32_t last_hi_ = 0;
+  uint16_t last_lo_ = 0;
 
   InternalGPIOPin *pin_;
 };
