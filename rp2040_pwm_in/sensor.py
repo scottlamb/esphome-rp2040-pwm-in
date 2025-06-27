@@ -14,8 +14,9 @@ from esphome.const import (
     ICON_PULSE,
     STATE_CLASS_MEASUREMENT,
     #STATE_CLASS_TOTAL_INCREASING,
+    UNIT_HERTZ,
     UNIT_PULSES,
-    UNIT_PULSES_PER_MINUTE,
+    #UNIT_PULSES_PER_MINUTE,
 )
 
 ns = cg.esphome_ns.namespace("rp2040_pwm_in")
@@ -31,9 +32,9 @@ def validate_pin(value):
 CONFIG_SCHEMA = cv.All(
     sensor.sensor_schema(
         Rp2040PwmInSensor,
-        unit_of_measurement=UNIT_PULSES_PER_MINUTE,
+        unit_of_measurement=UNIT_HERTZ,
         icon=ICON_PULSE,
-        accuracy_decimals=2,
+        accuracy_decimals=0,
         state_class=STATE_CLASS_MEASUREMENT,
     )
     .extend(
