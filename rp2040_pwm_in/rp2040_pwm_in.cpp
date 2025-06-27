@@ -88,7 +88,6 @@ void Rp2040PwmInSensor::update() {
       }
       hi = next_hi;
   }
-  ESP_LOGD(TAG, "[%s] hi=%u lo=%u", this->get_name().c_str(), hi, lo);
   uint64_t pulses = (static_cast<uint64_t>(hi) << 16) + lo;
   uint64_t last_pulses = (static_cast<uint64_t>(this->last_hi_) << 16) + this->last_lo_;
   uint64_t delta = (pulses - last_pulses) & ((1uLL << 48) - 1);
