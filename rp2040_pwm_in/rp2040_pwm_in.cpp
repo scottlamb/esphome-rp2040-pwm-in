@@ -17,10 +17,10 @@ void wraparound_intr() {
     int mask = slices_in_use | pwm_get_irq_status_mask();
     for (int i = 0; i < NUM_PWM_SLICES; ++i) {
         if (mask & (1 << i)) {
-            wraparounds[i]++;
-            pwm_clear_irq(i);
+          wraparounds[i]++;
         }
     }
+    pwm_hw->intr = mask; // clear all IRQs.
 }
 
 }
@@ -40,8 +40,12 @@ void Rp2040PwmInSensor::setup() {
   pwm_init(slice, &cfg, true);
   pwm_clear_irq(slice);
   pwm_set_irq_enabled(slice, true);
-  pwm_set_enabled(slice, true);
   gpio_set_function(gpio, GPIO_FUNC_PWM);
+
+  // `wakeups` and the PWM counter are now 0 and `last_hi_` and `last_lo_` already match that.
+  // Set the `last_read_micros_` so the first update's deltas will be correct.
+  this->last_read_micros_ = micros();
+  pwm_set_enabled(slice, true);
 }
 
 void Rp2040PwmInSensor::dump_config() {
@@ -52,39 +56,25 @@ void Rp2040PwmInSensor::dump_config() {
 
 void Rp2040PwmInSensor::update() {
   int slice = pwm_gpio_to_slice_num(this->pin_->get_pin());
+  int slice_mask = 1 << slice;
 
-  // Let's try to minimize skew between read of `now_micros`, `hi`, and `lo`.
   uint32_t now_micros = micros();
   uint32_t hi = wraparounds[slice];
   uint16_t lo = pwm_get_counter(slice);
-  uint32_t delta_micros = now_micros - this->last_read_micros_;
-
-  if (lo < this->last_lo_ && hi == this->last_hi_) {
-      // `lo` appears to have wrapped around but `wraparound_intr` has not run yet.
-      if (pwm_get_irq_status_mask() & (1 << slice)) {
-          hi++;
-          ESP_LOGW(TAG, "saw queued wraparound, surprising! now=%u then=%u hi=%u lo=%u last_lo_=%u", now_micros, this->last_read_micros_, hi, lo, this->last_lo_);
-      } else {
-          int new_hi = wraparounds[slice];
-          if (new_hi == hi) {
-              ESP_LOGW(TAG, "repeat hi! now=%u then=%u hi=%u lo=%u last_lo_=%u", now_micros, this->last_read_micros_, hi, lo, this->last_lo_);
-              hi++;
-          } else {
-              // This is the unsurprising case.
-              ESP_LOGD(TAG, "wraparound irq lagged behind, now=%u then=%u hi=%u lo=%u last_lo_=%u", now_micros, this->last_read_micros_, hi, lo, this->last_lo_);
-              hi = new_hi;
-          }
-      }
+  if (pwm_get_irq_status_mask() & (1 << slice) || wraparounds[slice] != hi) {
+      // Haven't caught this in action, but in theory it should happen sometimes.
+      // And we probably should use a loop, similar to the SDK's `timer_time_us_64`.
+      ESP_LOGW(TAG, "[%s] hi correction", get_name().c_str());
+      hi++;
   }
 
-  // The intermediate assignment of `lo_delta` isn't just for readability; it avoids incorrect wraparound due to C++'s automatic promotion of `uint16_t` to `uint32_t`.
-  uint32_t hi_delta = hi - this->last_hi_;
-  uint16_t lo_delta = lo - this->last_lo_;
+  uint64_t pulses = (static_cast<uint64_t>(hi) << 16) + lo;
+  uint64_t last_pulses = (static_cast<uint64_t>(this->last_hi_) << 16) + this->last_lo_;
+  uint64_t delta = pulses - last_pulses & 0xFFFFFFFFFFFFULL;
+  uint32_t delta_micros = now_micros - this->last_read_micros_;
 
-  this->publish_state(
-    static_cast<float>((static_cast<uint64_t>(hi_delta) << 16) | static_cast<uint64_t>(lo_delta)) /
-    (static_cast<float>(delta_micros) / 60000000.)
-  );
+  float new_state = static_cast<float>(delta) / (static_cast<float>(delta_micros) / 60000000.);
+  this->publish_state(new_state);
   this->last_hi_ = hi;
   this->last_lo_ = lo;
   this->last_read_micros_ = now_micros;
